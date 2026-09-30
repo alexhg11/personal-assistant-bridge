@@ -17,6 +17,22 @@ The bridge holds the Meta secrets and the git deploy key. Claude Code runs as a 
 - Replies chunked to WhatsApp's size limit.
 - After each run: `git add -A && git commit` (git dir outside the vault) and push.
 - Duplicate webhook deliveries are dropped by message id (SQLite).
+- `POST /jobs/<name>` — loopback only, not proxied by nginx. Runs the prompt file `<name>.md` from `JOBS_DIR` in a throwaway Claude session and sends the result to the allow-listed number. A reply of exactly `NOTHING` is dropped. Systemd timers in `deploy/` fire it on a schedule.
+
+## Proactive messages and the 24-hour window
+
+Meta only accepts free-form text within 24 hours of the recipient's last message. When a job result is refused with error `131047`, the bridge sends the approved utility template named by `WA_TEMPLATE` with the reply's first line as its one parameter, and parks the full text in SQLite. The next inbound message from the recipient flushes parked texts before Claude sees it.
+
+Create the template once in WhatsApp Manager → Message templates, category **Utility**, one body parameter, for example:
+
+> Your scheduled report is ready: {{1}}
+> Reply to this message to receive the full report.
+
+Meta's classifier flags friendlier wording as Marketing; "scheduled report" passes as Utility.
+
+Job prompts put a one-line summary first so that headline reads well on its own.
+
+Until it is approved, leave `WA_TEMPLATE` empty; results outside the window are then logged and parked but nothing is sent.
 
 ## Build
 
@@ -29,4 +45,13 @@ On the box itself: `go build -o /usr/local/bin/personal-assistant-bridge .`
 
 ## Deploy
 
-See `deploy/`: systemd unit, env file example, nginx location block, privacy page.
+See `deploy/`: systemd unit, env file example, nginx location block, privacy page, and for scheduled jobs the `assistant-job@.service` template unit, the `assistant-*.timer` files and the prompt files under `deploy/jobs/`.
+
+```bash
+sudo install -d -m 755 /etc/personal-assistant/jobs
+sudo install -m 644 deploy/jobs/*.md /etc/personal-assistant/jobs/
+sudo install -m 644 deploy/assistant-job@.service deploy/assistant-*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now assistant-morning-brief.timer assistant-evening-lookahead.timer
+sudo systemctl start assistant-job@morning-brief   # run one by hand
+```

@@ -1,0 +1,11 @@
+[Unit]
+Description=Morning brief over WhatsApp
+
+[Timer]
+# The box runs UTC; the zone suffix keeps the brief at 07:00 local.
+OnCalendar=*-*-* 07:00:00 America/Monterrey
+Persistent=true
+Unit=assistant-job@morning-brief.service
+
+[Install]
+WantedBy=timers.target

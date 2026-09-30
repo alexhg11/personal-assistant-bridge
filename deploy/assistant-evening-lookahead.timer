@@ -1,0 +1,10 @@
+[Unit]
+Description=Evening look-ahead over WhatsApp
+
+[Timer]
+OnCalendar=*-*-* 19:00:00 America/Monterrey
+Persistent=true
+Unit=assistant-job@evening-lookahead.service
+
+[Install]
+WantedBy=timers.target

@@ -35,6 +35,18 @@ type Config struct {
 	ClaudeUser    string // assistant
 	ClaudeTimeout time.Duration
 
+	// Scheduled jobs: prompt files named <job>.md in JobsDir, triggered by
+	// POST /jobs/<job> from loopback (systemd timers). JobTZ is the zone the
+	// "today is" line in each job prompt uses; the box itself runs UTC.
+	JobsDir string
+	JobTZ   *time.Location
+
+	// Approved utility template used when a proactive message falls outside
+	// the 24-hour customer-service window. One body parameter. Empty
+	// WATemplate disables the fallback and such messages are just lost.
+	WATemplate     string
+	WATemplateLang string
+
 	DBPath string
 }
 
@@ -54,6 +66,9 @@ func loadConfig() (*Config, error) {
 		GitPush:         env("GIT_PUSH", "true") == "true",
 		ClaudeRun:       env("CLAUDE_RUN", "/home/assistant/bin/claude-run"),
 		ClaudeUser:      env("CLAUDE_USER", "assistant"),
+		JobsDir:         env("JOBS_DIR", "/etc/personal-assistant/jobs"),
+		WATemplate:      os.Getenv("WA_TEMPLATE"),
+		WATemplateLang:  env("WA_TEMPLATE_LANG", "en_US"),
 		DBPath:          env("DB_PATH", "/var/lib/personal-assistant/bridge.db"),
 	}
 
@@ -62,6 +77,12 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("CLAUDE_TIMEOUT: %w", err)
 	}
 	cfg.ClaudeTimeout = timeout
+
+	loc, err := time.LoadLocation(env("JOB_TZ", "America/Monterrey"))
+	if err != nil {
+		return nil, fmt.Errorf("JOB_TZ: %w", err)
+	}
+	cfg.JobTZ = loc
 
 	var missing []string
 	for name, v := range map[string]string{

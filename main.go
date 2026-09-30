@@ -49,6 +49,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /webhook", verifyHandler(cfg))
 	mux.HandleFunc("POST /webhook", webhookHandler(cfg, store, queue))
+	mux.HandleFunc("POST /jobs/{name}", jobsHandler(cfg, queue))
 	mux.HandleFunc("GET /healthz", func(rw http.ResponseWriter, _ *http.Request) {
 		rw.WriteHeader(http.StatusOK)
 		_, _ = rw.Write([]byte("ok\n"))

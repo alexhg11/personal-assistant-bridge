@@ -1,0 +1,14 @@
+# Template unit: assistant-job@<name>.service triggers the bridge's
+# loopback-only job route for /etc/personal-assistant/jobs/<name>.md.
+# Fired by the matching timer; run by hand with
+#   sudo systemctl start assistant-job@morning-brief
+
+[Unit]
+Description=Personal assistant scheduled job (%i)
+After=personal-assistant-bridge.service
+Requires=personal-assistant-bridge.service
+
+[Service]
+Type=oneshot
+User=bridge
+ExecStart=/usr/bin/curl -sf -X POST http://127.0.0.1:8080/jobs/%i

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,36 @@ import (
 
 // WhatsApp text bodies are capped at 4096 characters; keep headroom.
 const chunkLimit = 3900
+
+// Template body parameters may not contain newlines or runs of more than
+// four spaces, and are short. Keep the headline well under Meta's limit.
+const templateParamLimit = 200
+
+// Graph API error code for a free-form message sent more than 24 hours
+// after the customer's last message. Only an approved template gets through.
+const codeOutsideWindow = 131047
+
+// graphError is a non-2xx Graph API response, with the error code Meta puts
+// in the body when there is one.
+type graphError struct {
+	Status  int
+	Code    int
+	Message string
+}
+
+func (e *graphError) Error() string {
+	if e.Code != 0 {
+		return fmt.Sprintf("graph api: status %d code %d: %s", e.Status, e.Code, e.Message)
+	}
+	return fmt.Sprintf("graph api: status %d: %s", e.Status, e.Message)
+}
+
+// outsideWindow reports whether err is Meta refusing a free-form message
+// because the 24-hour window is closed.
+func outsideWindow(err error) bool {
+	var ge *graphError
+	return errors.As(err, &ge) && ge.Code == codeOutsideWindow
+}
 
 type WhatsApp struct {
 	cfg    *Config
@@ -42,6 +73,43 @@ func (w *WhatsApp) SendText(ctx context.Context, to, text string) error {
 		}
 	}
 	return nil
+}
+
+// SendTemplate sends the configured utility template with one body
+// parameter. It is the only kind of message Meta accepts outside the
+// 24-hour window.
+func (w *WhatsApp) SendTemplate(ctx context.Context, to, param string) error {
+	if w.cfg.WATemplate == "" {
+		return errors.New("no WA_TEMPLATE configured")
+	}
+	payload := map[string]any{
+		"messaging_product": "whatsapp",
+		"recipient_type":    "individual",
+		"to":                to,
+		"type":              "template",
+		"template": map[string]any{
+			"name":     w.cfg.WATemplate,
+			"language": map[string]any{"code": w.cfg.WATemplateLang},
+			"components": []map[string]any{{
+				"type":       "body",
+				"parameters": []map[string]any{{"type": "text", "text": templateParam(param)}},
+			}},
+		},
+	}
+	return w.post(ctx, w.messagesURL(), payload)
+}
+
+// templateParam makes text safe for a template body parameter: one line,
+// single spaces, capped.
+func templateParam(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > templateParamLimit {
+		s = strings.TrimSpace(string(r[:templateParamLimit-1])) + "…"
+	}
+	if s == "" {
+		s = "(empty)"
+	}
+	return s
 }
 
 // MarkReadTyping sends a read receipt with a typing indicator so the phone
@@ -104,9 +172,24 @@ func (w *WhatsApp) post(ctx context.Context, url string, payload any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("graph api: status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		return parseGraphError(resp.StatusCode, b)
 	}
 	return nil
+}
+
+func parseGraphError(status int, body []byte) *graphError {
+	ge := &graphError{Status: status, Message: strings.TrimSpace(string(body))}
+	var parsed struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &parsed) == nil && parsed.Error.Code != 0 {
+		ge.Code = parsed.Error.Code
+		ge.Message = parsed.Error.Message
+	}
+	return ge
 }
 
 func (w *WhatsApp) getJSON(ctx context.Context, url string, out any) error {

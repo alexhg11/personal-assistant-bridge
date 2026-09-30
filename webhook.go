@@ -13,14 +13,16 @@ import (
 
 const maxBody = 1 << 20 // 1 MiB; webhook payloads are small
 
-// inbound is one user message pulled out of a webhook payload.
+// inbound is one unit of work for the worker: a user message pulled out of a
+// webhook payload, or a scheduled job (Type "job", see jobs.go).
 type inbound struct {
 	MessageID string
-	From      string // wa_id
+	From      string // wa_id; for jobs, the recipient of the result
 	UserID    string // business-scoped user id, may be empty
-	Type      string // text | image | other
-	Text      string
+	Type      string // text | image | job | other
+	Text      string // message body, or the full job prompt
 	Image     *inboundImage
+	Job       string // job name, set only when Type == "job"
 }
 
 type inboundImage struct {

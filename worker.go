@@ -37,6 +37,15 @@ func (w *worker) handle(ctx context.Context, m inbound) {
 		return
 	}
 
+	if m.Type == "job" {
+		w.handleJob(ctx, m)
+		return
+	}
+
+	// The sender wrote, so the 24-hour window is open: deliver anything a
+	// job could not send free-form since their last message.
+	w.flushParked(ctx, m.From)
+
 	if err := w.wa.MarkReadTyping(ctx, m.MessageID); err != nil {
 		log.Printf("typing indicator: %v", err)
 	}
@@ -48,6 +57,59 @@ func (w *worker) handle(ctx context.Context, m inbound) {
 	}
 	if err := w.wa.SendText(ctx, m.From, reply); err != nil {
 		log.Printf("send reply: %v", err)
+	}
+}
+
+// handleJob runs a scheduled prompt in a throwaway session and delivers the
+// result proactively. Errors are logged, never sent: a failing job at 07:00
+// should not wake anyone up with a stack trace.
+func (w *worker) handleJob(ctx context.Context, m inbound) {
+	res, err := w.runClaude(ctx, m.MessageID, m.Text, "")
+	if err != nil {
+		log.Printf("job %s: %v", m.Job, err)
+		return
+	}
+	w.commit(ctx, m.MessageID, "job "+m.Job)
+
+	reply := strings.TrimSpace(res.Result)
+	if reply == "" || strings.EqualFold(reply, nothingReply) {
+		log.Printf("job %s: nothing to report", m.Job)
+		return
+	}
+	w.deliver(ctx, m.From, reply)
+}
+
+// deliver sends a proactive message. Outside the 24-hour window Meta only
+// accepts a template, so the headline goes out that way and the full text
+// waits in the store until the recipient writes back.
+func (w *worker) deliver(ctx context.Context, to, text string) {
+	err := w.wa.SendText(ctx, to, text)
+	if err == nil {
+		return
+	}
+	if !outsideWindow(err) {
+		log.Printf("deliver: %v", err)
+		return
+	}
+	if perr := w.store.Park(to, text); perr != nil {
+		log.Printf("deliver: park: %v", perr)
+	}
+	if terr := w.wa.SendTemplate(ctx, to, firstLine(text)); terr != nil {
+		log.Printf("deliver: window closed and template failed: %v (message parked)", terr)
+		return
+	}
+	log.Print("deliver: window closed, sent template and parked the full message")
+}
+
+func (w *worker) flushParked(ctx context.Context, to string) {
+	bodies, err := w.store.TakeParked(to)
+	if err != nil {
+		log.Printf("parked: %v", err)
+	}
+	for _, body := range bodies {
+		if err := w.wa.SendText(ctx, to, body); err != nil {
+			log.Printf("parked: send: %v", err)
+		}
 	}
 }
 
@@ -74,18 +136,16 @@ func (w *worker) process(ctx context.Context, m inbound) (string, error) {
 		return "", err
 	}
 
-	started := time.Now()
-	res, err := w.runner.Run(ctx, prompt, sessionID)
+	res, err := w.runClaude(ctx, m.MessageID, prompt, sessionID)
 	if errors.Is(err, errStaleSession) {
 		log.Printf("session %s for %s is gone, starting a new one", sessionID, m.From)
 		_ = w.store.ClearSession(m.From)
 		sessionID = ""
-		res, err = w.runner.Run(ctx, prompt, "")
+		res, err = w.runClaude(ctx, m.MessageID, prompt, "")
 	}
 	if err != nil {
 		return "", err
 	}
-	log.Printf("claude: %s turns=%d cost=$%.4f elapsed=%s", m.MessageID, res.NumTurns, res.Cost, time.Since(started).Round(time.Second))
 
 	if res.SessionID != "" && res.SessionID != sessionID {
 		if err := w.store.SetSession(m.From, res.SessionID); err != nil {
@@ -93,13 +153,34 @@ func (w *worker) process(ctx context.Context, m inbound) (string, error) {
 		}
 	}
 
-	if committed, err := w.repo.CommitAndPush(ctx, prompt); err != nil {
+	w.commit(ctx, m.MessageID, prompt)
+	return res.Result, nil
+}
+
+func (w *worker) runClaude(ctx context.Context, id, prompt, sessionID string) (*claudeResult, error) {
+	started := time.Now()
+	res, err := w.runner.Run(ctx, prompt, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("claude: %s turns=%d cost=$%.4f elapsed=%s", id, res.NumTurns, res.Cost, time.Since(started).Round(time.Second))
+	return res, nil
+}
+
+func (w *worker) commit(ctx context.Context, id, label string) {
+	if committed, err := w.repo.CommitAndPush(ctx, label); err != nil {
 		log.Printf("git: %v", err)
 	} else if committed {
-		log.Printf("git: committed vault changes for %s", m.MessageID)
+		log.Printf("git: committed vault changes for %s", id)
 	}
+}
 
-	return res.Result, nil
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return s
 }
 
 func (w *worker) command(cmd string, m inbound) (handled bool, reply string, err error) {

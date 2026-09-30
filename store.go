@@ -35,6 +35,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS processed (
   message_id TEXT PRIMARY KEY,
   seen_at    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS parked (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  recipient  TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -75,4 +81,41 @@ ON CONFLICT(sender) DO UPDATE SET session_id = excluded.session_id, updated_at =
 func (s *Store) ClearSession(sender string) error {
 	_, err := s.db.Exec(`DELETE FROM sessions WHERE sender = ?`, sender)
 	return err
+}
+
+// Park keeps a proactive message that could not be sent free-form because
+// the 24-hour window was closed. It is delivered by TakeParked once the
+// recipient writes again.
+func (s *Store) Park(recipient, body string) error {
+	_, err := s.db.Exec(`INSERT INTO parked (recipient, body, created_at) VALUES (?, ?, ?)`,
+		recipient, body, time.Now().UTC().Format(time.RFC3339))
+	return err
+}
+
+// TakeParked returns and removes every parked message for the recipient,
+// oldest first.
+func (s *Store) TakeParked(recipient string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT id, body FROM parked WHERE recipient = ? ORDER BY id`, recipient)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	var bodies []string
+	for rows.Next() {
+		var id int64
+		var body string
+		if err := rows.Scan(&id, &body); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+		bodies = append(bodies, body)
+	}
+	rows.Close()
+	for _, id := range ids {
+		if _, err := s.db.Exec(`DELETE FROM parked WHERE id = ?`, id); err != nil {
+			return bodies, err
+		}
+	}
+	return bodies, nil
 }
