@@ -1,0 +1,23 @@
+[Unit]
+Description=WhatsApp bridge to Claude Code (personal assistant)
+After=network-online.target ob-sync.service
+Wants=network-online.target
+
+[Service]
+User=bridge
+Group=assistant
+UMask=0002
+EnvironmentFile=/etc/personal-assistant/bridge.env
+Environment=HOME=/home/bridge
+WorkingDirectory=/srv/vault
+ExecStart=/usr/local/bin/personal-assistant-bridge
+Restart=always
+RestartSec=5
+StateDirectory=personal-assistant
+NoNewPrivileges=false
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/srv/vault /srv/vault-git /var/lib/personal-assistant
+
+[Install]
+WantedBy=multi-user.target

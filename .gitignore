@@ -1,0 +1,4 @@
+/personal-assistant-bridge
+/dist/
+*.db
+bridge.env
