@@ -54,10 +54,26 @@ func (w *worker) handle(ctx context.Context, m inbound) {
 	if err != nil {
 		log.Printf("process %s: %v", m.MessageID, err)
 		reply = "Something went wrong on my side: " + err.Error()
+	} else {
+		reply = w.applyReminders(m.From, reply)
 	}
 	if err := w.wa.SendText(ctx, m.From, reply); err != nil {
 		log.Printf("send reply: %v", err)
 	}
+}
+
+// applyReminders strips REMIND lines from a chat reply, saves them, and
+// appends the bridge's own confirmations.
+func (w *worker) applyReminders(recipient, reply string) string {
+	clean, rs, problems := extractReminders(reply, time.Now(), w.cfg.JobTZ)
+	if len(rs) == 0 && len(problems) == 0 {
+		return reply
+	}
+	lines := append(w.saveReminders(recipient, rs), problems...)
+	if clean == "" {
+		return strings.Join(lines, "\n")
+	}
+	return clean + "\n\n" + strings.Join(lines, "\n")
 }
 
 // handleJob runs a scheduled prompt in a throwaway session and delivers the
@@ -192,8 +208,14 @@ func (w *worker) command(cmd string, m inbound) (handled bool, reply string, err
 		return true, "New session started.", nil
 	case "/ping":
 		return true, "pong", nil
+	case "/reminders":
+		reply, err := w.listReminders(m.From)
+		return true, reply, err
+	case "/cancel":
+		reply, err := w.cancelReminder(m.From, strings.TrimPrefix(cmd, "/cancel"))
+		return true, reply, err
 	case "/help":
-		return true, "Send text or an image. /clear starts a fresh session. /ping checks I'm alive.", nil
+		return true, "Send text or an image. Ask me to remind you of something at a time. /reminders lists pending ones, /cancel <n> removes one. /clear starts a fresh session. /ping checks I'm alive.", nil
 	}
 	return false, "", nil
 }

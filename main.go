@@ -45,6 +45,7 @@ func main() {
 		defer close(workerDone)
 		w.run(ctx, queue)
 	}()
+	go w.runReminders(ctx, 30*time.Second)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /webhook", verifyHandler(cfg))

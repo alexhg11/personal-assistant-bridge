@@ -13,11 +13,15 @@ The bridge holds the Meta secrets and the git deploy key. Claude Code runs as a 
 - `GET /webhook` — Meta's verification handshake.
 - `POST /webhook` — verifies `X-Hub-Signature-256`, keeps messages only from the allow-listed sender, acks with 200 immediately, processes in a single worker.
 - Text → prompt. Images → downloaded into the vault's media folder, path given to Claude.
-- One Claude session per sender, resumed on every turn. `/clear` starts a new one. `/ping`, `/help`.
+- One Claude session per sender, resumed on every turn. `/clear` starts a new one. `/ping`, `/help`, `/reminders`, `/cancel <n>`.
 - Replies chunked to WhatsApp's size limit.
 - After each run: `git add -A && git commit` (git dir outside the vault) and push.
 - Duplicate webhook deliveries are dropped by message id (SQLite).
 - `POST /jobs/<name>` — loopback only, not proxied by nginx. Runs the prompt file `<name>.md` from `JOBS_DIR` in a throwaway Claude session and sends the result to the allow-listed number. A reply of exactly `NOTHING` is dropped. Systemd timers in `deploy/` fire it on a schedule.
+
+## Ad-hoc reminders
+
+"Remind me Friday at 9 to call Ricardo" works because Claude answers with a `REMIND: 2026-10-02 09:00 | Call Ricardo` line (or `REMIND: in 20m | …`), following the contract in `deploy/claude-md-reminders.md`, which is appended to the server-side `CLAUDE.md`. The bridge strips those lines, stores the reminders in SQLite, appends its own `⏰ Reminder #n set for …` confirmation, and a scheduler fires them every 30 s through the same delivery path as jobs (template fallback included). `/reminders` lists pending ones, `/cancel <n>` removes one. Times are interpreted in `JOB_TZ`; the `claude-run` wrapper should export `TZ=America/Monterrey` so Claude's idea of today matches.
 
 ## Proactive messages and the 24-hour window
 
