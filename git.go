@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -34,9 +35,21 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 
 // CommitAndPush stages everything, commits if anything changed, and pushes.
 // A push failure is returned but the commit stays; the next push carries it.
+//
+// Before staging, the branch is moved to origin/master with a mixed reset so
+// commits made elsewhere (the Mac) are adopted instead of fought. Only the
+// index moves; the work tree stays as Obsidian Sync delivered it, which is
+// the source of truth. If Sync lags, the result is a noisy pair of commits,
+// never a lost file.
 func (r *Repo) CommitAndPush(ctx context.Context, prompt string) (committed bool, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+
+	if _, err := r.git(ctx, "fetch", "-q", "origin"); err != nil {
+		log.Printf("git: fetch failed, committing on local history: %v", err)
+	} else if _, err := r.git(ctx, "reset", "-q", "origin/master"); err != nil {
+		return false, err
+	}
 
 	if _, err := r.git(ctx, "add", "-A"); err != nil {
 		return false, err
