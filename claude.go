@@ -17,6 +17,10 @@ type Runner struct {
 	cfg *Config
 }
 
+// errStaleSession is returned when --resume names a session Claude Code no
+// longer has, e.g. after its transcript directory was cleared.
+var errStaleSession = errors.New("stale session")
+
 func newRunner(cfg *Config) *Runner { return &Runner{cfg: cfg} }
 
 type claudeResult struct {
@@ -47,6 +51,10 @@ func (r *Runner) Run(ctx context.Context, prompt, sessionID string) (*claudeResu
 	runErr := cmd.Run()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return nil, fmt.Errorf("claude timed out after %s", r.cfg.ClaudeTimeout)
+	}
+
+	if sessionID != "" && runErr != nil && strings.Contains(stderr.String()+stdout.String(), "No conversation found with session ID") {
+		return nil, errStaleSession
 	}
 
 	var res claudeResult

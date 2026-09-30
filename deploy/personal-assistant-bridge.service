@@ -16,7 +16,7 @@ RestartSec=5
 StateDirectory=personal-assistant
 NoNewPrivileges=false
 ProtectSystem=full
-ProtectHome=read-only
+# No ProtectHome: the sudo'd Claude run must write its session transcripts under /home/assistant/.claude
 ReadWritePaths=/srv/vault /srv/vault-git /var/lib/personal-assistant
 
 [Install]

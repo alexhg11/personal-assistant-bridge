@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -75,6 +76,12 @@ func (w *worker) process(ctx context.Context, m inbound) (string, error) {
 
 	started := time.Now()
 	res, err := w.runner.Run(ctx, prompt, sessionID)
+	if errors.Is(err, errStaleSession) {
+		log.Printf("session %s for %s is gone, starting a new one", sessionID, m.From)
+		_ = w.store.ClearSession(m.From)
+		sessionID = ""
+		res, err = w.runner.Run(ctx, prompt, "")
+	}
 	if err != nil {
 		return "", err
 	}
