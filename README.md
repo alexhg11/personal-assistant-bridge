@@ -15,7 +15,7 @@ The bridge holds the Meta secrets and the git deploy key. Claude Code runs as a 
 - Text → prompt. Images → downloaded into the vault's media folder, path given to Claude.
 - One Claude session per sender, resumed on every turn. `/clear` starts a new one. `/ping`, `/help`, `/reminders`, `/cancel <n>`.
 - Replies chunked to WhatsApp's size limit.
-- After each run: `git add -A && git commit` (git dir outside the vault) and push.
+- After each run: commit on top of `origin/master` and push (git dir outside the vault). Only paths whose content changed in the work tree since the box's last successful commit are staged, tracked in a second index file (`box.index` in the git dir); a note that is merely behind `origin/master` because Obsidian Sync has not delivered a Mac commit yet is left alone instead of being committed over it.
 - Duplicate webhook deliveries are dropped by message id (SQLite).
 - `POST /jobs/<name>` — loopback only, not proxied by nginx. Runs the prompt file `<name>.md` from `JOBS_DIR` in a throwaway Claude session and sends the result to the allow-listed number. A reply of exactly `NOTHING` is dropped. Systemd timers in `deploy/` fire it on a schedule.
 
